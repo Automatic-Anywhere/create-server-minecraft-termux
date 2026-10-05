@@ -1,0 +1,368 @@
+cat > ~/setup-minecraft.sh <<'SCRIPT'
+#!/data/data/com.termux/files/usr/bin/bash
+
+echo
+echo "=============================================="
+echo "   MINECRAFT JAVA 1.20.1 SERVER"
+echo "   TERMUX + UBUNTU 24.04"
+echo "=============================================="
+echo
+
+# =========================================================
+# [1/7] PROOT-DISTRO
+# =========================================================
+
+echo "[1/7] Kiểm tra proot-distro..."
+
+if command -v proot-distro >/dev/null 2>&1; then
+    echo "OK: proot-distro đã có."
+else
+    echo "Chưa có proot-distro."
+    echo "Đang cài..."
+    pkg update -y
+    pkg install -y proot-distro
+fi
+
+# =========================================================
+# [2/7] UBUNTU
+# =========================================================
+
+echo
+echo "[2/7] Kiểm tra Ubuntu..."
+
+# KHÔNG dùng grep danh sách nữa.
+# Thử đăng nhập trực tiếp vào Ubuntu.
+
+if proot-distro login ubuntu -- true >/dev/null 2>&1; then
+
+    echo "OK: Ubuntu đã tồn tại và hoạt động."
+    echo "Bỏ qua bước cài Ubuntu."
+
+else
+
+    echo "Ubuntu chưa hoạt động."
+
+    # Kiểm tra lần nữa xem container có tồn tại nhưng đang lỗi hay không
+    if proot-distro list 2>/dev/null | grep -q "ubuntu"; then
+
+        echo "Phát hiện container Ubuntu đã tồn tại."
+        echo "Không cài lại và KHÔNG xóa container."
+        echo "Thử khởi động lại Ubuntu..."
+
+        if proot-distro login ubuntu -- true >/dev/null 2>&1; then
+            echo "OK: Ubuntu hoạt động."
+        else
+            echo
+            echo "LỖI: Ubuntu tồn tại nhưng không thể khởi động."
+            echo
+            echo "Script dừng để bảo vệ dữ liệu."
+            echo "KHÔNG có dữ liệu nào bị xóa."
+            exit 1
+        fi
+
+    else
+
+        echo "Không tìm thấy Ubuntu."
+        echo "Đang cài Ubuntu 24.04..."
+
+        proot-distro install ubuntu:24.04
+
+        echo
+        echo "Kiểm tra Ubuntu sau khi cài..."
+
+        if proot-distro login ubuntu -- true >/dev/null 2>&1; then
+            echo "OK: Ubuntu 24.04 đã cài thành công."
+        else
+            echo "LỖI: Ubuntu cài xong nhưng không thể khởi động."
+            exit 1
+        fi
+
+    fi
+fi
+
+# =========================================================
+# [3/7] CHẠY CẤU HÌNH TRONG UBUNTU
+# =========================================================
+
+echo
+echo "[3/7] Bắt đầu cấu hình bên trong Ubuntu..."
+echo
+
+proot-distro login ubuntu -- bash -s <<'UBUNTU_SCRIPT'
+
+echo
+echo "=============================================="
+echo "       CẤU HÌNH MINECRAFT TRONG UBUNTU"
+echo "=============================================="
+echo
+
+export DEBIAN_FRONTEND=noninteractive
+
+# =========================================================
+# [4/7] JAVA 17
+# =========================================================
+
+echo "[4/7] Kiểm tra Java 17..."
+
+JAVA_OK=false
+
+if command -v java >/dev/null 2>&1; then
+    if java -version 2>&1 | grep -q '"17\.'; then
+        JAVA_OK=true
+    fi
+fi
+
+if [ "$JAVA_OK" = true ]; then
+
+    echo "OK: Java 17 đã có."
+    echo "Bỏ qua cài Java."
+
+else
+
+    echo "Java 17 chưa có."
+    echo "Đang cài Java 17..."
+
+    apt update
+    apt install -y \
+        openjdk-17-jre-headless \
+        ca-certificates \
+        curl
+
+    echo
+    echo "Java sau khi cài:"
+    java -version
+
+fi
+
+# =========================================================
+# [5/7] MINECRAFT
+# =========================================================
+
+echo
+echo "[5/7] Kiểm tra thư mục Minecraft..."
+
+if [ -d /root/minecraft ]; then
+
+    echo "OK: /root/minecraft đã tồn tại."
+    echo "Giữ nguyên toàn bộ dữ liệu."
+
+else
+
+    echo "Chưa có thư mục Minecraft."
+    echo "Đang tạo..."
+
+    mkdir -p /root/minecraft
+
+fi
+
+cd /root/minecraft
+
+# =========================================================
+# SERVER.JAR
+# =========================================================
+
+echo
+echo "Kiểm tra server.jar..."
+
+MINECRAFT_URL="https://piston-data.mojang.com/v1/objects/84194a2f286ef7c14ed7ce0090dba59902951553/server.jar"
+
+if [ -f server.jar ]; then
+
+    echo "OK: server.jar đã tồn tại."
+    ls -lh server.jar
+    echo "Không tải lại."
+
+else
+
+    echo "server.jar chưa có."
+    echo "Đang tải Minecraft Java 1.20.1..."
+    echo
+
+    curl -L --fail --progress-bar \
+        -o server.jar \
+        "$MINECRAFT_URL"
+
+    echo
+    echo "OK: Đã tải Minecraft 1.20.1."
+    ls -lh server.jar
+
+fi
+
+# =========================================================
+# EULA
+# =========================================================
+
+echo
+echo "Kiểm tra EULA..."
+
+if [ -f eula.txt ]; then
+
+    if grep -q '^eula=true$' eula.txt; then
+        echo "OK: EULA đã là true."
+    else
+        echo "EULA chưa là true."
+        echo "Đang sửa thành true..."
+
+        sed -i 's/^eula=.*/eula=true/' eula.txt
+
+        if ! grep -q '^eula=true$' eula.txt; then
+            printf 'eula=true\n' > eula.txt
+        fi
+    fi
+
+else
+
+    echo "Chưa có eula.txt."
+    echo "Đang tạo eula=true..."
+
+    printf 'eula=true\n' > eula.txt
+
+fi
+
+# =========================================================
+# SERVER.PROPERTIES
+# =========================================================
+
+echo
+echo "Kiểm tra server.properties..."
+
+if [ -f server.properties ]; then
+
+    echo "OK: server.properties đã tồn tại."
+    echo "Giữ nguyên các thiết lập khác."
+
+else
+
+    echo "Chưa có server.properties."
+    echo "Đang tạo..."
+
+    touch server.properties
+
+fi
+
+# =========================================================
+# ONLINE MODE
+# =========================================================
+
+echo
+echo "Đặt online-mode=false..."
+
+if grep -q '^online-mode=' server.properties; then
+
+    sed -i 's/^online-mode=.*/online-mode=false/' server.properties
+
+else
+
+    printf 'online-mode=false\n' >> server.properties
+
+fi
+
+echo "OK: online-mode=false"
+
+# =========================================================
+# START.SH
+# =========================================================
+
+echo
+echo "Tạo file start.sh..."
+
+cat > start.sh <<'START_SERVER'
+#!/bin/bash
+
+cd /root/minecraft
+
+echo
+echo "=============================================="
+echo "       MINECRAFT JAVA SERVER 1.20.1"
+echo "=============================================="
+echo
+echo "Java: 17"
+echo "RAM: 1GB - 2GB"
+echo "online-mode: false"
+echo
+echo "Server đang khởi động..."
+echo
+echo "Để dừng server, nhập:"
+echo "stop"
+echo
+
+exec java -Xms1G -Xmx2G -jar server.jar nogui
+START_SERVER
+
+chmod +x start.sh
+
+# =========================================================
+# KIỂM TRA
+# =========================================================
+
+echo
+echo "=============================================="
+echo "             KIỂM TRA CUỐI"
+echo "=============================================="
+echo
+
+echo "--- JAVA ---"
+java -version
+
+echo
+echo "--- SERVER.JAR ---"
+ls -lh server.jar
+
+echo
+echo "--- EULA ---"
+grep '^eula=' eula.txt
+
+echo
+echo "--- ONLINE MODE ---"
+grep '^online-mode=' server.properties
+
+echo
+echo "--- THƯ MỤC MINECRAFT ---"
+ls -lah
+
+# =========================================================
+# KIỂM TRA SERVER ĐANG CHẠY
+# =========================================================
+
+echo
+echo "Kiểm tra server có đang chạy không..."
+
+if ps aux 2>/dev/null | grep '[j]ava.*server.jar' >/dev/null 2>&1; then
+
+    echo
+    echo "=============================================="
+    echo " SERVER ĐÃ ĐANG CHẠY"
+    echo "=============================================="
+    echo
+    echo "Không khởi động thêm server."
+    echo
+
+else
+
+    echo
+    echo "=============================================="
+    echo "     KHỞI ĐỘNG MINECRAFT SERVER"
+    echo "=============================================="
+    echo
+
+    exec ./start.sh
+
+fi
+
+UBUNTU_SCRIPT
+
+echo
+echo "=============================================="
+echo "             SCRIPT HOÀN TẤT"
+echo "=============================================="
+echo
+
+SCRIPT
+
+chmod +x ~/setup-minecraft.sh
+
+echo
+echo "Bắt đầu chạy setup..."
+echo
+
+exec ~/setup-minecraft.sh
